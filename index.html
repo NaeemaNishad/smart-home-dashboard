@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Smart Home Remote</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="config.js"></script> <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Inter', sans-serif; background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; width: 100%; max-width: 1200px; }
+        .card { background: #1e293b; padding: 20px; border-radius: 20px; text-align: center; border: 1px solid #334155; position: relative; }
+        .camera-card { grid-column: span 2; overflow: hidden; background: #000; min-height: 400px; }
+        .analytics-card { grid-column: 1 / -1 !important; width: 100%; margin-top: 10px; }
+        #camera-feed { width: 100%; height: 100%; object-fit: cover; border-radius: 15px; }
+        .cam-label { position: absolute; top: 15px; left: 15px; background: rgba(239, 68, 68, 0.8); padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: bold; z-index: 10; }
+        .btn { border: none; padding: 12px 25px; border-radius: 12px; font-weight: bold; cursor: pointer; transition: 0.3s; margin: 5px; font-size: 14px; width: 110px; }
+        .btn-on { background: #10b981; color: white; box-shadow: 0 4px 14px 0 rgba(16, 185, 129, 0.3); }
+        .btn-off { background: #ef4444; color: white; }
+        .divider { border-top: 1px solid #334155; margin: 15px 0; }
+        .sensor-val { font-size: 48px; font-weight: 800; color: #38bdf8; margin: 10px 0; }
+        .rain-status { font-size: 24px; color: #94a3b8; }
+        .alert { background: #7f1d1d; color: #fecaca; padding: 10px; border-radius: 10px; margin-top: 10px; display: none; }
+        .graph-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; width: 100%; margin-top: 20px; }
+        .graph-grid iframe { width: 100%; height: 320px; border: 1px solid #334155; border-radius: 12px; background: #1e293b; }
+        .full-width-graph { grid-column: 1 / -1; height: 380px !important; }
+
+        @media (max-width: 900px) {
+            .camera-card, .analytics-card, .full-width-graph { grid-column: span 1 !important; }
+            .graph-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>AI Smart Home</h1>
+    <p style="color: #94a3b8; margin-bottom: 30px;">Smart Home Command Center</p>
+
+    <div class="grid">
+        <div class="card camera-card">
+            <div class="cam-label"><i class="fas fa-circle"></i> LIVE FEED</div>
+            <img id="camera-feed" src="">
+            <div id="cam-err" style="display:none; padding-top: 150px;">
+                <i class="fas fa-video-slash fa-3x" style="color: #475569;"></i>
+                <p>Camera Stream Offline</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <i class="fas fa-fan fa-2x" style="color: #38bdf8;"></i>
+            <h3>Fan System</h3>
+            <p id="fan-state" style="color: #94a3b8;">Status: Unknown</p>
+            <button class="btn btn-on" onclick="control('home/fan', '1')">TURN ON</button>
+            <button class="btn btn-off" onclick="control('home/fan', '0')">TURN OFF</button>
+            <div class="divider"></div>
+            <i class="fas fa-lightbulb fa-2x" style="color: #fbbf24;"></i>
+            <h3>Smart LED</h3>
+            <p id="led-state" style="color: #94a3b8;">Status: Unknown</p>
+            <button class="btn btn-on" onclick="control('home/led', '1')">TURN ON</button>
+            <button class="btn btn-off" onclick="control('home/led', '0')">TURN OFF</button>
+        </div>
+
+        <div class="card">
+            <i class="fas fa-mask fa-2x"></i>
+            <h3>Gas Level</h3>
+            <div id="gas-val" class="sensor-val">--</div>
+            <div id="gas-alert" class="alert">⚠️ HIGH GAS ALERT!</div>
+        </div>
+
+        <div class="card">
+            <i id="rain-icon" class="fas fa-cloud fa-2x"></i>
+            <h3>Weather</h3>
+            <div id="rain-text" class="rain-status">Waiting...</div>
+        </div>
+
+        <div class="card analytics-card">
+            <i class="fas fa-chart-line fa-2x" style="color: #10b981; margin-bottom: 10px;"></i>
+            <h3>Live History & Analytics</h3>
+            <div id="graph-container" class="graph-grid"></div>
+        </div>
+    </div>
+
+    <script>
+        // Setup Camera URL from Config
+        document.getElementById('camera-feed').src = `http://${CONFIG.CAMERA_IP}/stream`;
+        document.getElementById('camera-feed').onerror = function() {
+            this.style.display = 'none';
+            document.getElementById('cam-err').style.display = 'block';
+        };
+
+        // Load Graphs dynamically using Config
+        const gContainer = document.getElementById('graph-container');
+        const fields = [
+            {id: 1, title: 'Gas History', color: '%2338bdf8'},
+            {id: 2, title: 'Rain Status', color: '%23fbbf24'},
+            {id: 3, title: 'Fan Activity', color: '%2310b981'},
+            {id: 4, title: 'LED Activity', color: '%23f43f5e'}
+        ];
+
+        fields.forEach(f => {
+            gContainer.innerHTML += `<iframe src="https://thingspeak.com/channels/${CONFIG.THING_SPEAK_ID}/charts/${f.id}?bgcolor=%231e293b&color=${f.color}&dynamic=true&title=${f.title}&api_key=${CONFIG.READ_API_KEY}"></iframe>`;
+        });
+        // Add Buzzer full width
+        gContainer.innerHTML += `<iframe class="full-width-graph" src="https://thingspeak.com/channels/${CONFIG.THING_SPEAK_ID}/charts/5?bgcolor=%231e293b&color=%238b5cf6&dynamic=true&title=Buzzer+Security+Alerts&api_key=${CONFIG.READ_API_KEY}"></iframe>`;
+
+        // MQTT Logic
+        const client = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
+
+        client.on('connect', () => {
+            client.subscribe(CONFIG.MQTT_PREFIX + 'home/sensor/gas');
+            client.subscribe(CONFIG.MQTT_PREFIX + 'home/sensor/rain');
+        });
+
+        client.on('message', (topic, message) => {
+            const val = message.toString();
+            if (topic === CONFIG.MQTT_PREFIX + 'home/sensor/gas') {
+                document.getElementById('gas-val').innerText = val;
+                document.getElementById('gas-alert').style.display = (parseInt(val) > 1500) ? 'block' : 'none';
+            }
+            if (topic === CONFIG.MQTT_PREFIX + 'home/sensor/rain') {
+                const raining = (val === "1");
+                document.getElementById('rain-text').innerText = raining ? "Raining" : "Clear Sky";
+                document.getElementById('rain-icon').className = raining ? "fas fa-cloud-showers-heavy" : "fas fa-sun";
+            }
+        });
+
+        function control(topic, state) {
+            let signal = state;
+            if (topic === 'home/fan') signal = (state === '1') ? '0' : '1'; 
+            client.publish(CONFIG.MQTT_PREFIX + topic, signal);
+            document.getElementById(`${topic.split('/')[1]}-state`).innerText = "Status: " + (state === '1' ? 'ON' : 'OFF');
+        }
+    </script>
+</body>
+</html>
