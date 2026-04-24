@@ -82,55 +82,62 @@
     </div>
 
     <script>
-        // Setup Camera URL from Config
-        document.getElementById('camera-feed').src = `http://${CONFIG.CAMERA_IP}/stream`;
-        document.getElementById('camera-feed').onerror = function() {
-            this.style.display = 'none';
-            document.getElementById('cam-err').style.display = 'block';
+        // Ensure scripts wait for config.js to load
+        window.onload = function() {
+            
+            // 1. Setup Camera
+            const camImg = document.getElementById('camera-feed');
+            camImg.src = `http://${CONFIG.CAMERA_IP}/stream`;
+            camImg.onerror = function() {
+                this.style.display = 'none';
+                document.getElementById('cam-err').style.display = 'block';
+            };
+
+            // 2. Load Graphs dynamically
+            const gContainer = document.getElementById('graph-container');
+            const fields = [
+                {id: 1, title: 'Gas History', color: '%2338bdf8'},
+                {id: 2, title: 'Rain Status', color: '%23fbbf24'},
+                {id: 3, title: 'Fan Activity', color: '%2310b981'},
+                {id: 4, title: 'LED Activity', color: '%23f43f5e'}
+            ];
+
+            fields.forEach(f => {
+                gContainer.innerHTML += `<iframe src="https://thingspeak.com/channels/${CONFIG.THING_SPEAK_ID}/charts/${f.id}?bgcolor=%231e293b&color=${f.color}&dynamic=true&title=${f.title}&api_key=${CONFIG.READ_API_KEY}"></iframe>`;
+            });
+            gContainer.innerHTML += `<iframe class="full-width-graph" src="https://thingspeak.com/channels/${CONFIG.THING_SPEAK_ID}/charts/5?bgcolor=%231e293b&color=%238b5cf6&dynamic=true&title=Buzzer+Security+Alerts&api_key=${CONFIG.READ_API_KEY}"></iframe>`;
+
+            // 3. MQTT Logic
+            const client = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
+
+            client.on('connect', () => {
+                console.log("MQTT Connected with Prefix: " + CONFIG.MQTT_PREFIX);
+                client.subscribe(CONFIG.MQTT_PREFIX + 'home/sensor/gas');
+                client.subscribe(CONFIG.MQTT_PREFIX + 'home/sensor/rain');
+            });
+
+            client.on('message', (topic, message) => {
+                const val = message.toString();
+                if (topic === CONFIG.MQTT_PREFIX + 'home/sensor/gas') {
+                    document.getElementById('gas-val').innerText = val;
+                    document.getElementById('gas-alert').style.display = (parseInt(val) > 1500) ? 'block' : 'none';
+                }
+                if (topic === CONFIG.MQTT_PREFIX + 'home/sensor/rain') {
+                    const raining = (val === "1");
+                    document.getElementById('rain-text').innerText = raining ? "Raining" : "Clear Sky";
+                    document.getElementById('rain-icon').className = raining ? "fas fa-cloud-showers-heavy" : "fas fa-sun";
+                }
+            });
+
+            // Make control function global
+            window.control = function(topic, state) {
+                let signal = state;
+                if (topic === 'home/fan') signal = (state === '1') ? '0' : '1'; 
+                client.publish(CONFIG.MQTT_PREFIX + topic, signal);
+                const device = topic.split('/')[1];
+                document.getElementById(`${device}-state`).innerText = "Status: " + (state === '1' ? 'ON' : 'OFF');
+            };
         };
-
-        // Load Graphs dynamically using Config
-        const gContainer = document.getElementById('graph-container');
-        const fields = [
-            {id: 1, title: 'Gas History', color: '%2338bdf8'},
-            {id: 2, title: 'Rain Status', color: '%23fbbf24'},
-            {id: 3, title: 'Fan Activity', color: '%2310b981'},
-            {id: 4, title: 'LED Activity', color: '%23f43f5e'}
-        ];
-
-        fields.forEach(f => {
-            gContainer.innerHTML += `<iframe src="https://thingspeak.com/channels/${CONFIG.THING_SPEAK_ID}/charts/${f.id}?bgcolor=%231e293b&color=${f.color}&dynamic=true&title=${f.title}&api_key=${CONFIG.READ_API_KEY}"></iframe>`;
-        });
-        // Add Buzzer full width
-        gContainer.innerHTML += `<iframe class="full-width-graph" src="https://thingspeak.com/channels/${CONFIG.THING_SPEAK_ID}/charts/5?bgcolor=%231e293b&color=%238b5cf6&dynamic=true&title=Buzzer+Security+Alerts&api_key=${CONFIG.READ_API_KEY}"></iframe>`;
-
-        // MQTT Logic
-        const client = mqtt.connect('wss://broker.emqx.io:8084/mqtt');
-
-        client.on('connect', () => {
-            client.subscribe(CONFIG.MQTT_PREFIX + 'home/sensor/gas');
-            client.subscribe(CONFIG.MQTT_PREFIX + 'home/sensor/rain');
-        });
-
-        client.on('message', (topic, message) => {
-            const val = message.toString();
-            if (topic === CONFIG.MQTT_PREFIX + 'home/sensor/gas') {
-                document.getElementById('gas-val').innerText = val;
-                document.getElementById('gas-alert').style.display = (parseInt(val) > 1500) ? 'block' : 'none';
-            }
-            if (topic === CONFIG.MQTT_PREFIX + 'home/sensor/rain') {
-                const raining = (val === "1");
-                document.getElementById('rain-text').innerText = raining ? "Raining" : "Clear Sky";
-                document.getElementById('rain-icon').className = raining ? "fas fa-cloud-showers-heavy" : "fas fa-sun";
-            }
-        });
-
-        function control(topic, state) {
-            let signal = state;
-            if (topic === 'home/fan') signal = (state === '1') ? '0' : '1'; 
-            client.publish(CONFIG.MQTT_PREFIX + topic, signal);
-            document.getElementById(`${topic.split('/')[1]}-state`).innerText = "Status: " + (state === '1' ? 'ON' : 'OFF');
-        }
     </script>
 </body>
 </html>
