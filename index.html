@@ -48,14 +48,18 @@
         iframe { width: 100%; height: 260px; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); }
 
         @media (max-width: 768px) { .camera-card { grid-column: span 1; min-height: 250px; } }
+        
+        .setup-btn { background: none; border: 1px solid var(--border); color: var(--accent); padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; margin-top: 10px; transition: 0.3s; }
+        .setup-btn:hover { background: var(--accent); color: var(--bg-dark); }
     </style>
 </head>
 <body>
 
     <div class="header">
         <h1>AI Smart Home</h1>
-         <p style="color: #94a3b8; margin-bottom: 30px;">Smart Home Command Center</p>
-        <p><span id="mqtt-dot" class="status-dot offline"></span> MQTT: <span id="mqtt-status">Connecting...</span></p>
+         <p style="color: #94a3b8; margin-bottom: 10px;">Smart Home Command Center</p>
+         <button class="setup-btn" onclick="setupIP()"><i class="fas fa-cog"></i> Setup Camera IP</button>
+        <p style="margin-top: 20px;"><span id="mqtt-dot" class="status-dot offline"></span> MQTT: <span id="mqtt-status">Connecting...</span></p>
     </div>
 
     <div class="grid">
@@ -64,7 +68,7 @@
             <img id="camera-feed" src="" onerror="handleCamError()">
             <div id="cam-err" style="display:none; padding-top: 140px;">
                 <i class="fas fa-video-slash fa-3x" style="color: #475569;"></i>
-                <p>Camera Offline<br><small>Verify IP address in config.js</small></p>
+                <p>Camera Offline<br><small>Check IP or Browser Security Settings</small></p>
             </div>
         </div>
 
@@ -108,16 +112,27 @@
     </div>
 
     <script>
-        // 1. Setup Configuration from config.js
+        // 1. Storage Logic: Check browser memory, then config.js, then fallback
+        const getSetting = (key, fallback) => localStorage.getItem(key) || (typeof CONFIG !== 'undefined' ? CONFIG[key] : fallback);
+
         const SETTINGS = {
             MQTT_BROKER: 'wss://broker.emqx.io:8084/mqtt',
-            CHAN_ID: (typeof CONFIG !== 'undefined') ? CONFIG.THING_SPEAK_ID : '3186168',
-            CAM_IP: (typeof CONFIG !== 'undefined') ? CONFIG.CAMERA_IP : '10.152.46.58',
+            CHAN_ID: getSetting('THING_SPEAK_ID', '3186168'),
+            CAM_IP: getSetting('CAMERA_IP', '10.152.46.58'),
             GAS_LIMIT: 2800
         };
 
-        // 2. Set Camera URL
-        document.getElementById('camera-feed').src = `http://${SETTINGS.CAM_IP}/stream`;
+        // 2. Setup Camera
+        const cam = document.getElementById('camera-feed');
+        cam.src = `http://${SETTINGS.CAM_IP}/stream`;
+
+        function setupIP() {
+            const newIP = prompt("Enter your ESP32-CAM IP (e.g. 10.152.46.58):", SETTINGS.CAM_IP);
+            if (newIP) {
+                localStorage.setItem('CAMERA_IP', newIP);
+                location.reload();
+            }
+        }
 
         // 3. MQTT Connection
         const client = mqtt.connect(SETTINGS.MQTT_BROKER);
@@ -125,8 +140,6 @@
         client.on('connect', () => {
             document.getElementById('mqtt-status').innerText = "Online";
             document.getElementById('mqtt-dot').className = "status-dot online";
-            
-            // Subscribing to direct topics (No Prefix)
             client.subscribe('home/sensor/gas');
             client.subscribe('home/sensor/rain');
         });
@@ -139,12 +152,10 @@
         // 4. Handle Incoming Data
         client.on('message', (topic, message) => {
             const payload = message.toString();
-
             if (topic === 'home/sensor/gas') {
                 const val = parseInt(payload);
                 const valEl = document.getElementById('gas-val');
                 valEl.innerText = val;
-                
                 if (val > SETTINGS.GAS_LIMIT) {
                     valEl.style.color = "var(--danger)";
                     document.getElementById('gas-status').innerText = "Status: Poor";
@@ -155,7 +166,6 @@
                     document.getElementById('gas-alert').style.display = 'none';
                 }
             }
-
             if (topic === 'home/sensor/rain') {
                 const isRaining = (payload === "1");
                 document.getElementById('rain-text').innerText = isRaining ? "Raining" : "Clear Sky";
@@ -164,12 +174,9 @@
             }
         });
 
-        // 5. Control Functions
         function control(topic, state) {
-            // Signal logic for active-low relays (Common for Fans)
             let signal = (topic === 'home/fan') ? (state === '1' ? '0' : '1') : state;
             client.publish(topic, signal);
-            
             const deviceId = topic.split('/')[1] + '-state';
             document.getElementById(deviceId).innerText = `Status: ${state === '1' ? 'ON' : 'OFF'}`;
         }
@@ -179,7 +186,7 @@
             document.getElementById('cam-err').style.display = 'block';
         }
 
-        // 6. Dynamic Chart Loading
+        // 5. Dynamic Chart Loading
         const charts = [
             {id: 1, color: '%2338bdf8', title: 'Air+Quality'},
             {id: 2, color: '%23fbbf24', title: 'Rain+Status'},
